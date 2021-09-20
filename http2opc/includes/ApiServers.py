@@ -52,7 +52,7 @@ class RestRequestHandler (BaseHTTPRequestHandler) :
                 if k == 'method':
                     method = v
                 else:
-                    params = v
+                    params = urllib.unquote(v)
             else:
                 method = False
                 params = False
