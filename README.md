@@ -9,6 +9,7 @@ On your Windows server, install OpenOpc. Make sure that OpenOPC connects properl
 
 # Usage
 Run python main.py from the http2opc directory to start the API Daemon. Function documentation on http://headstation.com/archives/using-opc-rest-api/
+Request is to be made after URL with 'method=<METHOD>' concatenated with an ampersand (&) to split the parameters.  The path must have a variable (for example 'm=Root.*' otherwise the function won't read it as a parameter
 
 # Copyright
 Copyright 2016 Headstation. (http://headstation.com) All rights reserved. It is free software and may be redistributed under the terms specified in the LICENSE file (Apache License 2.0). 
