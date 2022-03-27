@@ -93,8 +93,55 @@ class RestRequestHandler (BaseHTTPRequestHandler):
             elif method.lower() == 'testcall':
                 json.dump(funcs.test_call(), self.wfile)
 
+    def do_PUT(self):
+        params = []
+        location = False
+        value = False
 
+        qstring = self.path[1:].split('&')
+        for s in qstring:
+            if '=' in s:
+                k, v = s.split('=')
+                logger.info('k: ' + k + ', v: ' + v)
+                if k == 'method':
+                    method = v
+                elif 'loc' in k:
+                    location = urllib.unquote(v)
+                elif 'val' in k:
+                    value = urllib.unquote(v)
+                else:
+                    params.append(urllib.unquote(v))
+            else:
+                method = False
+                params = False
+        if method:
+            if location and value:
+                params.append(location)
+                params.append(value)
 
+            if params:
+                for param in params:
+                    param = urllib.unquote(param).decode(
+                        'utf8').replace('+', ' ')
+
+            if method.lower() == 'write':
+                success = funcs.write(params)
+
+            if success == 'Success':
+                # send response code:
+                self.send_response(200)
+                # send headers:
+                #self.send_header("Content-type:", "text/html")
+                self.send_header("Content-type:", "application/json")
+                # send a blank line to end headers:
+                self.wfile.write("\n")
+                #logger.info('Hit with: ' + self.path )
+                json.dump(success, self.wfile)
+            else:
+                self.send_response(500)
+                self.send_header("Content-type:", "application/json")
+                self.wfile.write("\n")
+                json.dump(success, self.wfile)
 
     def log_message(self, format, *args):
         logger.info('Incoming: ' + self.client_address[0])
