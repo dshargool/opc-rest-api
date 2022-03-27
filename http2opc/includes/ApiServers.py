@@ -13,8 +13,9 @@ me = {"name": "bing"}
 logger = None
 funcs = None
 
+
 class RestApiServer(Thread):
-    def __init__(self, console, server_ip = '', server_port = 8003):
+    def __init__(self, console, server_ip='', server_port=8003):
 
         #self.logger = logger
         global logger
@@ -23,7 +24,8 @@ class RestApiServer(Thread):
         self.server_ip = server_ip
         self.server_port = server_port
 
-        httpd = HTTPServer((self.server_ip, self.server_port), RestRequestHandler)
+        httpd = HTTPServer(
+            (self.server_ip, self.server_port), RestRequestHandler)
         logger.info('Started REST API Server on port ' + str(self.server_port))
 
         global funcs
@@ -34,11 +36,9 @@ class RestApiServer(Thread):
             httpd.serve_forever()
 
 
+class RestRequestHandler (BaseHTTPRequestHandler):
 
-
-class RestRequestHandler (BaseHTTPRequestHandler) :
-
-    def do_GET(self) :
+    def do_GET(self):
 
         params = []
 
@@ -48,7 +48,7 @@ class RestRequestHandler (BaseHTTPRequestHandler) :
 
             if '=' in s:
 
-                k,v = s.split('=')
+                k, v = s.split('=')
                 if k == 'method':
                     method = v
                 else:
@@ -57,45 +57,45 @@ class RestRequestHandler (BaseHTTPRequestHandler) :
                 method = False
                 params = False
 
-        #send response code:
+        # send response code:
         self.send_response(200)
-        #send headers:
+        # send headers:
         #self.send_header("Content-type:", "text/html")
         self.send_header("Content-type:", "application/json")
         # send a blank line to end headers:
         self.wfile.write("\n")
 
-        ## -- Extract function parameters. 
+        # -- Extract function parameters.
         if method:
 
             if params:
-                d_params = urllib.unquote(params).decode('utf8').replace('+', ' ')
+                d_params = urllib.unquote(params).decode(
+                    'utf8').replace('+', ' ')
 
             if method.lower() == 'list':
-                json.dump( funcs.list(d_params), self.wfile )
+                json.dump(funcs.list(d_params), self.wfile)
             elif method.lower() == 'listrecursive':
-                json.dump( funcs.listRecursive(d_params), self.wfile ) 
+                json.dump(funcs.listRecursive(d_params), self.wfile)
             elif method.lower() == 'listtree':
-                json.dump( funcs.listTree(d_params), self.wfile )
+                json.dump(funcs.listTree(d_params), self.wfile)
             elif method.lower() == 'listonedeep':
-                json.dump( funcs.listOneDeep(d_params), self.wfile )
+                json.dump(funcs.listOneDeep(d_params), self.wfile)
             elif method.lower() == 'read':
-                json.dump( funcs.read(d_params), self.wfile ) 
+                json.dump(funcs.read(d_params), self.wfile)
             elif method.lower() == 'properties':
-                json.dump( funcs.properties(d_params, False), self.wfile )
+                json.dump(funcs.properties(d_params, False), self.wfile)
             elif method.lower() == 'jsonproperties':
-                json.dump( funcs.properties(d_params, True), self.wfile )
+                json.dump(funcs.properties(d_params, True), self.wfile)
             elif method.lower() == 'search':
-                json.dump( funcs.search(d_params), self.wfile )
+                json.dump(funcs.search(d_params), self.wfile)
             elif method.lower() == 'testing':
-                json.dump( funcs.testing(d_params), self.wfile )
+                json.dump(funcs.testing(d_params), self.wfile)
             elif method.lower() == 'testcall':
-                json.dump( funcs.test_call(), self.wfile )
+                json.dump(funcs.test_call(), self.wfile)
 
 
 
 
     def log_message(self, format, *args):
-        logger.info('Incoming: ' + self.client_address[0] )
+        logger.info('Incoming: ' + self.client_address[0])
         #logger.info('Incoming: ' + self.client_address[0] + ' - ' + format%args )
-
