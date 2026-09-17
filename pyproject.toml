@@ -1,0 +1,21 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+ignore = [
+    # Module names (ApiFunctions.py, ApiServers.py, OpenOPC.py,
+    # SystemHealth.py) predate this port and match the original project's
+    # established naming convention. Renaming them to snake_case would
+    # ripple through every import in the codebase for a pure style win with
+    # no correctness benefit.
+    "N999",
+    # OpenOPC.py's `except Exception:` blocks around raw COM automation
+    # calls (AddGroup/Validate/AddItems/SyncWrite/property lookups/...) are
+    # intentionally broad. Real OPC/COM error types vary by server vendor
+    # and version and can't be reliably enumerated without testing against
+    # real hardware we don't have access to; narrowing them risks turning a
+    # previously-harmless COM quirk into an uncaught crash. Each site logs
+    # the swallowed exception at the `trace` level for field diagnosis.
+    "BLE001",
+]
