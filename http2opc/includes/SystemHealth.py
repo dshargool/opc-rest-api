@@ -9,10 +9,13 @@ import win32process
 
 __version__ = "1.0.1"
 
-# NT4 does not have WMI by default
+# NT4 does not have WMI by default. Catching more than ImportError here on
+# purpose: a broken/stale pywin32 COM registration can make the wmi package
+# itself raise something else (e.g. AttributeError) at import time, and
+# that should still just mean "no wmi", not crash the whole process.
 try:
     import wmi
-except ImportError:
+except Exception:
     wmi_found = False
 else:
     wmi_found = True

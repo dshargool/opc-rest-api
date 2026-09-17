@@ -3,7 +3,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
 from . import OpenOPC
-from .ApiFunctions import ApiFunctions
+from .ApiFunctions import ApiFunctions, write_all_succeeded
 
 logger = None
 funcs = None
@@ -29,8 +29,11 @@ def _get_param(qs, name):
 
 
 def _require_param(qs, name):
+    # `not value`, not `value is None`: parse_qs(keep_blank_values=True)
+    # returns '' rather than omitting the key for e.g. "...&m=", and a
+    # blank value is never meaningful for any parameter this is used for.
     value = _get_param(qs, name)
-    if value is None:
+    if not value:
         raise MissingParameterError(f"Missing required parameter '{name}'")
     return value
 
@@ -120,6 +123,15 @@ class RestRequestHandler(BaseHTTPRequestHandler):
             logger.debug(f"OPC error handling {method}: {err}")
             _send_json(self, 503, {"error": str(err)})
             return
+        except Exception as err:
+            # Malformed input can reach a bare Python exception below this
+            # layer (e.g. OpenOPC.read() raises a plain TypeError for
+            # mixing health and OPC tags in one request). Without this, it
+            # would propagate out of the handler entirely instead of
+            # becoming a JSON response like every other error path here.
+            logger.error(f"Unexpected error handling {method}: {err}")
+            _send_json(self, 500, {"error": str(err)})
+            return
 
         _send_json(self, 200, result)
 
@@ -143,7 +155,16 @@ class RestRequestHandler(BaseHTTPRequestHandler):
         locations = qs.get("loc") or qs.get("m")
         values = qs.get("val") or qs.get("s")
 
-        if not locations or not values:
+        # Check each entry too, not just list-presence: parse_qs with
+        # keep_blank_values=True turns "...&loc=&val=5" into locations=[''],
+        # a non-empty list that would otherwise sail past this check and
+        # send a real write against an empty-string tag.
+        if (
+            not locations
+            or not values
+            or any(not loc for loc in locations)
+            or any(not val for val in values)
+        ):
             logger.debug(f"PUT {self.path}: missing loc/val (or m/s) parameters")
             _send_json(
                 self,
@@ -188,16 +209,21 @@ class RestRequestHandler(BaseHTTPRequestHandler):
             logger.debug(f"OPC error handling write: {err}")
             _send_json(self, 503, {"error": str(err)})
             return
+        except Exception as err:
+            # See the matching comment in do_GET.
+            logger.error(f"Unexpected error handling write: {err}")
+            _send_json(self, 500, {"error": str(err)})
+            return
 
+        # 200 only if every write succeeded (write_all_succeeded handles
+        # both the single-write string shape and the batch (tag, status)
+        # list shape), so a status-code-only check can't miss a partial
+        # batch failure. ApiFunctions.write() already logged any failure.
         if isinstance(result, list):
-            # (tag, status) pairs; 200 only if every tag succeeded, so a
-            # status-code-only check can't miss a partial failure.
-            all_succeeded = all(row[1] == "Success" for row in result)
-            _send_json(self, 200 if all_succeeded else 500, result)
-        elif result == "Success":
+            _send_json(self, 200 if write_all_succeeded(result) else 500, result)
+        elif write_all_succeeded(result):
             _send_json(self, 200, result)
         else:
-            # ApiFunctions.write() already logged this at warning.
             _send_json(self, 500, {"error": result})
 
     def log_message(self, format, *args):

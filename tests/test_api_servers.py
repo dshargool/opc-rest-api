@@ -54,6 +54,13 @@ class FakeFuncs:
         return {"called": "listOneDeep", "m": m}
 
     def read(self, m):
+        if m == "@MemFree,Root.Tag1":
+            # Mirrors the real ApiFunctions.read(): OpenOPC.client.read()
+            # raises a bare TypeError (not OpenOPC.OPCError) for mixing
+            # health and OPC tags in one call.
+            raise TypeError(
+                "system health and OPC tags cannot be included in the same group"
+            )
         return {"called": "read", "m": m}
 
     def properties(self, m, as_json):
@@ -154,6 +161,16 @@ def test_get_opc_error_is_503_and_marks_disconnected(server):
     assert status == 503
     assert body["error"] == "boom"
     assert ApiServers.funcs.connected is False
+
+
+def test_get_unexpected_exception_is_500_not_a_raw_crash(server):
+    # Regression test: a bare (non-OpenOPC.OPCError) exception from deeper
+    # in ApiFunctions/OpenOPC -- e.g. mixing health and OPC tags in one
+    # read -- used to propagate straight out of do_GET uncaught instead of
+    # becoming a JSON response like every other error path here.
+    status, body = _request(server, "/method=read&m=@MemFree,Root.Tag1")
+    assert status == 500
+    assert "health and OPC tags" in body["error"]
 
 
 def test_get_fails_fast_when_already_disconnected(server):

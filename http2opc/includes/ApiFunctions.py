@@ -91,6 +91,19 @@ class OpcConnection:
             self.logger.error(f"[{self.name}] OPC connection lost: {reason}")
 
     def _attempt_reconnect(self):
+        if self._ever_connected:
+            # Release the old session before starting a new one, same as
+            # this project always did before this port (its old ping()
+            # called close() before reconnecting). Best-effort: if the
+            # connection is already fully dead this can itself fail, which
+            # shouldn't block the reconnect attempt that follows.
+            try:
+                self.opc.close()
+            except Exception as err:
+                self.logger.debug(
+                    f"[{self.name}] close() before reconnect failed: {err}"
+                )
+
         self.logger.debug(
             f"[{self.name}] Attempting OPC connect({self.servers}, {self.host})"
         )
@@ -122,24 +135,34 @@ class OpcConnection:
                 )
 
     # Side-effect-free health probe: true if the server reports 'Running'.
+    # Uses server_state() (a single COM property read), not info() (about
+    # ten round-trips, including CreateBrowser(), to answer this one
+    # yes/no question) -- this runs every HEALTH_CHECK_INTERVAL_SECONDS
+    # for every connection, so the difference isn't free.
     def ping(self):
         try:
-            info = self.opc.info()
+            state = self.opc.server_state()
         except OpenOPC.OPCError as err:
             self.logger.debug(f"[{self.name}] Health check failed: {err}")
             return False
 
-        for prop_name, value in info:
-            if prop_name == "State":
-                if value != "Running":
-                    self.logger.warning(
-                        f"[{self.name}] OPC server reports state={value} "
-                        f"(expected Running)"
-                    )
-                return value == "Running"
+        if state != "Running":
+            self.logger.warning(
+                f"[{self.name}] OPC server reports state={state} (expected Running)"
+            )
+        return state == "Running"
 
-        self.logger.debug(f"[{self.name}] Health check: no State reported")
-        return False
+
+def write_all_succeeded(result):
+    """True if every write in `result` succeeded. `result` is write()'s
+    return shape: a bare 'Success'/error string for a single write, or a
+    list of (tag, status) pairs for a batch. Both ApiFunctions.write()
+    (to pick a log level) and ApiServers.do_PUT (to pick an HTTP status
+    code) need this, so it's normalized here once rather than each
+    re-deriving it from OpenOPC's return shape independently."""
+    if isinstance(result, list):
+        return all(status == "Success" for _tag, status in result)
+    return result == "Success"
 
 
 class ApiFunctions:
@@ -360,18 +383,18 @@ class ApiFunctions:
         self.logger.info(f"write({params})")
         success = self._with_failover(lambda opc: opc.write(params))
 
-        if isinstance(success, list):
-            failures = [row for row in success if row[1] != "Success"]
-            if failures:
-                succeeded = len(success) - len(failures)
-                self.logger.warning(
-                    f"write({params}) -> {succeeded}/{len(success)} succeeded, "
-                    f"failed: {failures}"
-                )
-            else:
+        if write_all_succeeded(success):
+            if isinstance(success, list):
                 self.logger.info(f"write({params}) -> all {len(success)} succeeded")
-        elif success == "Success":
-            self.logger.info(f"write({params}) -> Success")
+            else:
+                self.logger.info(f"write({params}) -> Success")
+        elif isinstance(success, list):
+            failures = [row for row in success if row[1] != "Success"]
+            succeeded = len(success) - len(failures)
+            self.logger.warning(
+                f"write({params}) -> {succeeded}/{len(success)} succeeded, "
+                f"failed: {failures}"
+            )
         else:
             self.logger.warning(f"write({params}) -> {success}")
 

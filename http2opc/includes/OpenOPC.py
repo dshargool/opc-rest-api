@@ -765,7 +765,12 @@ class client:
             )
 
         if single:
-            return next(iter(results))
+            # list(...), not next(iter(...)): iread() is a generator whose
+            # anonymous-group cleanup runs in a `finally` reached only once
+            # it's fully drained. Pulling just the first value with next()
+            # leaves it suspended before that finally runs, leaking the
+            # group until GC eventually closes the generator.
+            return list(results)[0]
         else:
             return list(results)
 
@@ -1020,7 +1025,9 @@ class client:
         status = self.iwrite(tag_value_pairs, size, pause, include_error)
 
         if single:
-            return next(iter(status))
+            # See the matching comment in read(): iwrite()'s group cleanup
+            # also runs in a `finally` reached only on full exhaustion.
+            return list(status)[0]
         else:
             return list(status)
 
@@ -1189,7 +1196,9 @@ class client:
         props = self.iproperties(tags, id)
 
         if single:
-            return next(iter(props))
+            # Consistent with read()/write() above: fully drain the
+            # generator rather than pulling a single value with next().
+            return list(props)[0]
         else:
             return list(props)
 
@@ -1370,6 +1379,17 @@ class client:
 
         except pythoncom.com_error as err:
             error_msg = f"info: {self._get_error_str(err)}"
+            raise OPCError(error_msg)
+
+    def server_state(self):
+        """Return the OPC server's reported state ('Running', 'Failed',
+        etc.) with a single property read, for callers that only need this
+        one field and not everything info() gathers (which also calls
+        CreateBrowser(), expensive on some servers)."""
+        try:
+            return OPC_STATUS[self._opc.ServerState]
+        except pythoncom.com_error as err:
+            error_msg = f"server_state: {self._get_error_str(err)}"
             raise OPCError(error_msg)
 
     def ping(self):

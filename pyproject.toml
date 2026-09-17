@@ -18,4 +18,12 @@ ignore = [
     # previously-harmless COM quirk into an uncaught crash. Each site logs
     # the swallowed exception at the `trace` level for field diagnosis.
     "BLE001",
+    # `next(iter(x))` over `list(x)[0]` is unsafe for OpenOPC.py's
+    # read()/write()/properties() single-item paths: `x` there is a
+    # generator whose per-request COM group cleanup runs in a `finally`
+    # reached only once the generator is fully drained. next(iter(x)) pulls
+    # one value and leaves it suspended before that finally runs, which is
+    # exactly the anonymous-group leak this codebase already fixed once
+    # (see git history) -- don't let this rule reintroduce it.
+    "RUF015",
 ]

@@ -95,8 +95,9 @@ class FakeGroup:
 
 
 class FakeGroups:
-    def __init__(self, group_factory):
+    def __init__(self, group_factory, remove_error=None):
         self._group_factory = group_factory
+        self._remove_error = remove_error
         self.added = []
         self.removed = []
 
@@ -106,10 +107,12 @@ class FakeGroups:
         return group
 
     def Remove(self, name):
+        if self._remove_error is not None:
+            raise self._remove_error
         self.removed.append(name)
 
 
-def make_client(group_factory):
+def make_client(group_factory, remove_error=None):
     client = OpenOPC.client.__new__(OpenOPC.client)
     client._groups = {}
     client._group_tags = {}
@@ -121,7 +124,7 @@ def make_client(group_factory):
     client.trace = None
     client.cpu = None
     client.callback_queue = queue.Queue()
-    groups = FakeGroups(lambda i: group_factory(i, client))
+    groups = FakeGroups(lambda i: group_factory(i, client), remove_error=remove_error)
     client._opc = types.SimpleNamespace(OPCGroups=groups)
     return client, groups
 
@@ -209,3 +212,71 @@ def test_iwrite_removes_anonymous_group_on_success(fake_win32):
 
     assert results == ["Success"]
     assert groups.removed == ["Group0"]
+
+
+def test_read_single_tag_removes_anonymous_group_synchronously(fake_win32):
+    # Regression test: read()'s single-tag path used to do
+    # `next(iter(results))`, which only pulls iread()'s first yielded value
+    # and leaves the generator suspended *before* it reaches the `finally`
+    # that removes the group. The fix is `list(results)[0]`, which fully
+    # drains the generator first.
+    client, groups = make_client(
+        lambda i, c: FakeGroup(
+            f"Group{i}", c, sync_read_result=([42], [0], [192], ["2024-01-01"])
+        )
+    )
+
+    result = client.read("Tag1", sync=True)
+
+    assert result == (42, "Good", "2024-01-01")
+    assert groups.removed == ["Group0"]
+
+
+def test_read_single_tag_propagates_cleanup_errors_instead_of_swallowing_them(
+    fake_win32,
+):
+    # The real distinguishing behavior between `list(results)[0]` and
+    # `next(iter(results))`: under CPython, an unreferenced generator is
+    # collected (and its `finally` run) essentially immediately either way,
+    # so a plain success/failure check doesn't tell the two apart. What
+    # does: `next(iter(...))` only pulls the first value and returns:
+    # cleanup then runs later, as a side effect of garbage collection
+    # closing the now-unreferenced generator. Any exception raised at that
+    # point (not just pythoncom.com_error, which the finally already
+    # catches) becomes "unraisable" -- Python prints it and swallows it,
+    # read() returns its value as if nothing went wrong. Fully draining
+    # with list()[0] instead makes that same exception propagate normally,
+    # so a real cleanup bug is visible instead of silently discarded.
+    client, _groups = make_client(
+        lambda i, c: FakeGroup(
+            f"Group{i}", c, sync_read_result=([42], [0], [192], ["2024-01-01"])
+        ),
+        remove_error=RuntimeError("cleanup boom"),
+    )
+
+    with pytest.raises(RuntimeError, match="cleanup boom"):
+        client.read("Tag1", sync=True)
+
+
+def test_write_single_pair_removes_anonymous_group_synchronously(fake_win32):
+    # Same regression as above, for write()'s single-pair path.
+    client, groups = make_client(lambda i, c: FakeGroup(f"Group{i}", c))
+
+    result = client.write(("Tag1", "123.0"))
+
+    assert result == "Success"
+    assert groups.removed == ["Group0"]
+
+
+def test_write_single_pair_propagates_cleanup_errors_instead_of_swallowing_them(
+    fake_win32,
+):
+    # See the matching read() test for why this is the behavior that
+    # actually distinguishes list(status)[0] from next(iter(status)).
+    client, _groups = make_client(
+        lambda i, c: FakeGroup(f"Group{i}", c),
+        remove_error=RuntimeError("cleanup boom"),
+    )
+
+    with pytest.raises(RuntimeError, match="cleanup boom"):
+        client.write(("Tag1", "123.0"))

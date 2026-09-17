@@ -518,8 +518,8 @@ def test_init_configures_failover_connections(tmp_path, monkeypatch):
 
 def test_ping_true_when_state_running():
     class Opc:
-        def info(self):
-            return [("State", "Running"), ("Vendor", "Acme")]
+        def server_state(self):
+            return "Running"
 
     funcs = make_funcs()
     conn = add_connection(funcs, Opc())
@@ -529,8 +529,8 @@ def test_ping_true_when_state_running():
 
 def test_ping_false_when_state_not_running():
     class Opc:
-        def info(self):
-            return [("State", "Failed")]
+        def server_state(self):
+            return "Failed"
 
     funcs = make_funcs()
     conn = add_connection(funcs, Opc())
@@ -539,9 +539,9 @@ def test_ping_false_when_state_not_running():
     assert any("Failed" in msg for msg in funcs.logger.calls["warning"])
 
 
-def test_ping_false_when_info_raises_opc_error():
+def test_ping_false_when_server_state_raises_opc_error():
     class Opc:
-        def info(self):
+        def server_state(self):
             raise api_functions_module.OpenOPC.OPCError("unreachable")
 
     funcs = make_funcs()
@@ -572,9 +572,9 @@ def test_tick_does_nothing_before_health_check_is_due():
     calls = []
 
     class Opc:
-        def info(self):
+        def server_state(self):
             calls.append("ping")
-            return [("State", "Running")]
+            return "Running"
 
     funcs = make_funcs()
     conn = add_connection(funcs, Opc(), connected=True)
@@ -587,8 +587,8 @@ def test_tick_does_nothing_before_health_check_is_due():
 
 def test_tick_pings_when_health_check_is_due_and_disconnects_on_failure():
     class Opc:
-        def info(self):
-            return [("State", "Failed")]
+        def server_state(self):
+            return "Failed"
 
     funcs = make_funcs()
     conn = add_connection(funcs, Opc(), connected=True)
@@ -635,6 +635,72 @@ def test_tick_does_not_reconnect_before_next_attempt_is_due():
 
     assert connect_calls == []
     assert conn.connected is False
+
+
+def test_reconnect_after_a_prior_connection_closes_the_old_session_first():
+    # Regression test: reconnecting used to call opc.connect() again on the
+    # same client with no opc.close() first, unlike this project's pre-port
+    # ping(), which always closed the old session before reconnecting.
+    calls = []
+
+    class Opc:
+        def close(self):
+            calls.append("close")
+
+        def connect(self, servers, host):
+            calls.append("connect")
+            return True
+
+    funcs = make_funcs()
+    conn = add_connection(funcs, Opc(), connected=False)
+    conn._ever_connected = True  # simulates "was connected before, then dropped"
+    conn._next_reconnect_attempt = 0
+
+    funcs.tick()
+
+    assert calls == ["close", "connect"]
+
+
+def test_initial_connect_does_not_call_close_first():
+    # No prior session to close on the very first-ever connect attempt.
+    calls = []
+
+    class Opc:
+        def close(self):
+            calls.append("close")
+
+        def connect(self, servers, host):
+            calls.append("connect")
+            return True
+
+    funcs = make_funcs()
+    conn = add_connection(funcs, Opc(), connected=False)
+    assert conn._ever_connected is False
+    conn._next_reconnect_attempt = 0
+
+    funcs.tick()
+
+    assert calls == ["connect"]
+
+
+def test_reconnect_tolerates_close_failing():
+    # close() on an already-dead connection can itself raise; that must not
+    # prevent the reconnect attempt that follows it.
+    class Opc:
+        def close(self):
+            raise RuntimeError("already disconnected")
+
+        def connect(self, servers, host):
+            return True
+
+    funcs = make_funcs()
+    conn = add_connection(funcs, Opc(), connected=False)
+    conn._ever_connected = True
+    conn._next_reconnect_attempt = 0
+
+    funcs.tick()
+
+    assert conn.connected is True
 
 
 # Multi-connection failover
