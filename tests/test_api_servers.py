@@ -26,8 +26,8 @@ class FakeFuncs:
     """Stands in for ApiFunctions at the ApiServers layer. Note that real
     ApiFunctions methods handle connection failover/marking-down internally
     (see ApiFunctions._with_failover) and only ever raise OpenOPC.OPCError
-    once every configured connection has failed -- ApiServers just reports
-    that as a 503, it doesn't manage connection state itself. This fake
+    once every configured connection has failed. ApiServers just reports
+    that as a 503; it doesn't manage connection state itself. This fake
     mimics that end state (self.connected flips to False) without
     simulating the failover loop itself, which is covered by
     test_api_functions.py instead."""

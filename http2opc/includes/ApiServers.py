@@ -50,15 +50,10 @@ GET_METHODS = {
 
 
 class OpcHTTPServer(HTTPServer):
-    """HTTPServer that also drives ApiFunctions' connection watchdog.
-
-    service_actions() is called by serve_forever() on every poll cycle
-    (twice a second by default), on the same thread that handles requests --
-    which is required, since the OPC client is a COM object bound to that
-    thread's single-threaded apartment and cannot safely be touched from a
-    second thread. This gives us background-ish reconnect/health-check
-    behavior without ever blocking a client request for long, and without
-    the cross-thread COM hazard a literal watchdog thread would introduce.
+    """Drives ApiFunctions' connection watchdog via service_actions(),
+    called every serve_forever() poll cycle on the request-handling thread.
+    That's required since OPC's COM client can't be touched from another
+    thread. Reconnects without ever blocking a client request for long.
     """
 
     def service_actions(self):
@@ -101,9 +96,9 @@ class RestRequestHandler(BaseHTTPRequestHandler):
 
         handler = GET_METHODS.get(method.lower())
         if handler is None:
-            # Likely a caller integration bug (typo'd/unsupported method), as
-            # opposed to the routine 4xx cases above -- worth INFO visibility
-            # by default rather than requiring debug to notice it.
+            # Likely a caller integration bug (typo'd/unsupported method),
+            # unlike the routine 4xx cases above, so it's worth INFO
+            # visibility by default rather than requiring debug to notice it.
             logger.info(f"GET {self.path}: unknown method '{method}'")
             _send_json(self, 404, {"error": f"Unknown method '{method}'"})
             return
@@ -120,10 +115,8 @@ class RestRequestHandler(BaseHTTPRequestHandler):
             _send_json(self, 400, {"error": str(err)})
             return
         except OpenOPC.OPCError as err:
-            # funcs.list()/read()/etc already failed over across every
-            # configured connection (marking each down as it went) before
-            # raising this -- see ApiFunctions._with_failover(). Nothing
-            # left to do here but report it.
+            # Already failed over across every configured connection (see
+            # ApiFunctions._with_failover) before raising this.
             logger.debug(f"OPC error handling {method}: {err}")
             _send_json(self, 503, {"error": str(err)})
             return
@@ -145,11 +138,8 @@ class RestRequestHandler(BaseHTTPRequestHandler):
             _send_json(self, 404, {"error": f"Unknown method '{method}'"})
             return
 
-        # A single loc/val (or m/s) pair writes one tag, same as always.
-        # Repeating the pair -- loc=A&val=1&loc=B&val=2 -- batches multiple
-        # writes into one OPC call instead of one HTTP round-trip per tag;
-        # ApiFunctions.write()/OpenOPC already support this, they just needed
-        # the pairs assembled here.
+        # Repeating loc/val (or m/s), e.g. loc=A&val=1&loc=B&val=2, batches
+        # multiple writes into one OPC call instead of one round-trip per tag.
         locations = qs.get("loc") or qs.get("m")
         values = qs.get("val") or qs.get("s")
 
@@ -194,18 +184,14 @@ class RestRequestHandler(BaseHTTPRequestHandler):
         try:
             result = funcs.write(write_params)
         except OpenOPC.OPCError as err:
-            # See the matching comment in do_GET: funcs.write() already
-            # failed over across every configured connection.
+            # See the matching comment in do_GET.
             logger.debug(f"OPC error handling write: {err}")
             _send_json(self, 503, {"error": str(err)})
             return
 
         if isinstance(result, list):
-            # Batch write: a list of (tag, status) pairs. 200 only if every
-            # tag succeeded, so a client checking just the status code can't
-            # miss a partial failure; the body always has the per-tag detail
-            # either way. ApiFunctions.write() already logs the failure
-            # detail at warning, so there's nothing more to log here.
+            # (tag, status) pairs; 200 only if every tag succeeded, so a
+            # status-code-only check can't miss a partial failure.
             all_succeeded = all(row[1] == "Success" for row in result)
             _send_json(self, 200 if all_succeeded else 500, result)
         elif result == "Success":
@@ -215,8 +201,6 @@ class RestRequestHandler(BaseHTTPRequestHandler):
             _send_json(self, 500, {"error": result})
 
     def log_message(self, format, *args):
-        # The base class's default behavior (write "client - request-line
-        # status" to stderr) is what we want in the log file, just redirected
-        # through our logger -- the previous override discarded the actual
-        # request line and status entirely, keeping only the client IP.
+        # Redirect the base class's access-log line through our logger
+        # instead of stderr (request line + status, not just the client IP).
         logger.debug(f"{self.client_address[0]} - {format % args}")

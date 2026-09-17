@@ -5,12 +5,12 @@
 # Copyright (c) 2007-2015 Barry Barnreiter (barrybb@gmail.com)
 #
 # Licensed under the GNU GPL v2 with a special linking exception for this
-# file (OpenOPC.py) only -- see LICENSE-OpenOPC.txt at the repository root
+# file (OpenOPC.py) only. See LICENSE-OpenOPC.txt at the repository root
 # for the exact terms. The exception permits linking this file into
 # independently-licensed programs (such as the Apache-2.0-licensed REST
 # wrapper in this repository).
 #
-# Ported to Python 3 (2026) -- see git history for the original Python 2
+# Ported to Python 3 (2026). See git history for the original Python 2
 # source.
 #
 ###########################################################################
@@ -691,20 +691,19 @@ class client:
                             else:
                                 yield (tag, value, quality, timestamp)
 
-                # However the block above exits -- clean return, an exception raised
-                # from it (including TimeoutError, which pythoncom.com_error below
-                # does not catch), or the generator being closed early by its
-                # consumer -- an anonymous group must never survive past this
-                # iteration. Leaving this to run only on the success path is what
-                # let every timed-out/errored read leak a live COM group and its
-                # event subscription on the OPC server, and leak the Python-side
-                # `_group_hooks` entry (previously never deleted, only closed).
+                # `finally`, not just on success: an anonymous group must
+                # never survive past this iteration, or it leaks a live COM
+                # group + event subscription on the OPC server whenever a
+                # read errors or times out.
                 finally:
                     if group == None:
                         try:
                             if not sync and opc_group.Name in self._group_hooks:
                                 if self.trace:
                                     self.trace(f"CloseEvents({opc_group.Name})")
+                                # pop(), not just close(): leaving the entry
+                                # in the dict leaked memory for the life of
+                                # the process, one entry per request.
                                 self._group_hooks.pop(opc_group.Name).close()
 
                             if self.trace:
@@ -887,11 +886,8 @@ class client:
                 opc_groups = self._opc.OPCGroups
                 opc_group = opc_groups.Add()
 
-                # See the matching comment in iread(): cleanup must run no matter
-                # how this iteration exits (success, a raised exception -- COM or
-                # otherwise, e.g. an IndexError if a Validate/AddItems COM call
-                # itself throws and leaves 'errors' short -- or early generator
-                # closure), or the group leaks on the OPC server forever.
+                # Same reasoning as iread()'s finally: cleanup must run no
+                # matter how this exits, or the group leaks.
                 try:
                     opc_items = opc_group.OPCItems
 

@@ -503,8 +503,9 @@ def test_init_configures_failover_connections(tmp_path, monkeypatch):
     funcs.init()
 
     assert [c.name for c in funcs.connections] == ["primary", "secondary"]
-    # classname/servers fall back to the primary's; host does not (no
-    # sensible default -- the whole point of a failover is a different host).
+    # classname/servers fall back to the primary's; host does not (there's
+    # no sensible default, since the whole point of a failover is a
+    # different host).
     assert funcs.connections[1].classname == "Some.Class"
     assert funcs.connections[1].servers == "Some.Server"
     assert funcs.connections[1].host == "10.0.0.2"
@@ -560,7 +561,7 @@ def test_mark_disconnected_flips_flag_once():
     assert disconnected_at is not None
 
     # A second call while already down must not reset the outage clock, or
-    # log a second time -- it should look like one continuous outage, not a
+    # log a second time. It should look like one continuous outage, not a
     # fresh one each time a request happens to fail.
     conn.mark_disconnected("boom again")
     assert conn._disconnected_at == disconnected_at
@@ -636,7 +637,7 @@ def test_tick_does_not_reconnect_before_next_attempt_is_due():
     assert conn.connected is False
 
 
-# -- Multi-connection failover ------------------------------------------
+# Multi-connection failover
 
 
 def test_with_failover_uses_primary_when_up():

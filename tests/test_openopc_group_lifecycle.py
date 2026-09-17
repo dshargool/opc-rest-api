@@ -5,11 +5,11 @@ Every REST read/write goes through OpenOPC.client.iread()/iwrite(), which
 create a brand-new anonymous COM group per call. Before the fix, group
 removal ran *after* the read/write logic instead of in a `finally`, so any
 exception (a timeout, a COM error, or even a plain Python bug) skipped
-cleanup and permanently leaked the group -- and, for async reads, its entry
+cleanup and permanently leaked the group, and, for async reads, its entry
 in `self._group_hooks`, which was never deleted even on the success path.
 These tests build a fake win32com/pythoncom layer (none of that is
-importable on non-Windows) so the group lifecycle logic itself -- which is
-pure Python -- can be exercised without a real OPC server.
+importable on non-Windows), so the group lifecycle logic itself, which is
+pure Python, can be exercised without a real OPC server.
 """
 
 import queue
@@ -182,7 +182,7 @@ def test_iread_async_deletes_group_hooks_entry_after_success(fake_win32):
 def test_iwrite_removes_anonymous_group_when_validate_raises_non_com_error(fake_win32):
     # Regression for the write-side equivalent: if the Validate() COM call
     # itself throws, 'errors' stays [] (set before the try) and the very next
-    # `errors[i]` raises a plain IndexError -- not a pythoncom.com_error, so
+    # `errors[i]` raises a plain IndexError, not a pythoncom.com_error, so
     # it wasn't caught by write's error handling either. The group must still
     # be removed.
     class BrokenItems(FakeItems):

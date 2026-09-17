@@ -5,7 +5,7 @@ Python Rest API using OpenOPC to provide direct API access for any OS platform. 
 This code vendors a Python 3 port of OpenOPC (originally by Barry Barnreiter, https://sourceforge.net/projects/openopc/files/) and requires Python 3 plus `pywin32` on the Windows host that runs it. See `requirements.txt`.
 
 # Installation
-On your Windows server, install `pywin32` (`pip install -r requirements.txt`). Make sure the vendored OpenOPC client connects properly to your OPC Server -- see http://openopc.sourceforge.net/ for background on OPC DA and COM/DCOM setup. Once that's confirmed, download the http2opc code above and drop it in your preferred directory.
+On your Windows server, install `pywin32` (`pip install -r requirements.txt`). Make sure the vendored OpenOPC client connects properly to your OPC Server; see http://openopc.sourceforge.net/ for background on OPC DA and COM/DCOM setup. Once that's confirmed, download the http2opc code above and drop it in your preferred directory.
 
 # Running as a Windows service (NSSM)
 `main.py` is a plain foreground script (it reads `main.conf` from its own
@@ -14,7 +14,7 @@ run unattended and restart on boot/crash. [NSSM](https://nssm.cc/) is the
 usual choice for this.
 
 The app itself logs to stderr (there's no file-logging or rotation built into
-`main.py` -- see `[logging] level=` in `main.conf` for verbosity), so let NSSM
+`main.py`; see `[logging] level=` in `main.conf` for verbosity), so let NSSM
 capture and rotate that output rather than trying to configure Python-side
 file logging:
 
@@ -46,7 +46,7 @@ nssm start Http2Opc
 Rotation tabs, if you'd rather not use the command line for all of it.)
 
 Set `[logging] level=` in `main.conf` to `debug` or `trace` temporarily if
-you need more detail while diagnosing an issue in the field -- see
+you need more detail while diagnosing an issue in the field; see
 [Operations](#operations) below for what each level shows.
 
 # Development / Testing
@@ -70,7 +70,7 @@ second), and resumes serving normally once the OPC server is reachable again.
 - `debug`: adds per-request call detail for every function (params + result
   count) and per-attempt reconnect detail.
 - `trace`: adds OpenOPC's own low-level per-COM-call tracing (AddGroup,
-  SyncRead, RemoveGroup, Connect, ...) -- several lines per request; use only
+  SyncRead, RemoveGroup, Connect, ...). Several lines per request; use only
   when `debug` isn't enough to see what's going wrong.
 
 ## Multiple OPC servers (failover)
@@ -83,13 +83,13 @@ skipping any currently known to be down; a request only gets a 503 once
 reconnect/health-check cycle, and its own `[name] ...` prefix on every
 connection-related log line so you can tell which one an event is about.
 
-**This applies to writes too, not just reads** -- a write can be served by
+**This applies to writes too, not just reads.** A write can be served by
 any currently-healthy configured server, not only the primary. That's only
 safe if a write via any of them reaches the same real destination (e.g.
 independent OPC front-ends that all ultimately write through to the same
 underlying controller, where a momentary difference between servers settles
 out downstream). If your servers are instead genuinely independent systems
-where writing to the wrong one would be wrong -- not just delayed -- don't
+where writing to the wrong one would be wrong, not just delayed, don't
 configure them as failovers of each other this way.
 
 If every configured server is down, that's logged distinctly from any one
@@ -102,7 +102,7 @@ servers is down" (degraded, still serving) or "the whole thing is down"
 Taken (and expanded upon) from: http://headstation.com/archives/using-opc-rest-api/
 
 Examples below assume the service is running on the same machine you're
-querying from, on the default port (8003) -- substitute your server's actual
+querying from, on the default port (8003); substitute your server's actual
 address otherwise. Every response is JSON. Errors (4xx/5xx) come back as
 `{"error": "..."}`; see [Status codes](#status-codes) below.
 
@@ -171,7 +171,7 @@ Repeating the `loc`/`val` (or `m`/`s`) pair batches multiple writes into a singl
 ```bash
 curl -X PUT "http://127.0.0.1:8003/method=write&loc=Root.Int4&val=123.0&loc=Root.Int5&val=45.6"
 ```
-Response is a list of `[tag, status]` pairs -- 200 only if every write succeeded, 500 if any failed (the body still shows exactly which ones, either way):
+Response is a list of `[tag, status]` pairs. 200 only if every write succeeded, 500 if any failed (the body still shows exactly which ones, either way):
 ```json
 [["Root.Int4", "Success"], ["Root.Int5", "Success"]]
 ```
@@ -197,13 +197,13 @@ curl http://127.0.0.1:8003/method=search&m=Common
 ```
 
 ## Status codes
-- `200` -- success (see each function above for the response shape).
-- `400` -- missing or malformed parameters (e.g. no `method`, no `m`, mismatched batch `loc`/`val` counts).
-- `404` -- unknown `method`.
-- `500` -- the write (or batch write) itself failed at the OPC server; for a batch, check the response body for which tag(s) failed.
-- `503` -- the OPC server connection is currently down. The service is retrying in the background (see [Operations](#operations) below); safe to retry the request shortly.
+- `200`: success (see each function above for the response shape).
+- `400`: missing or malformed parameters (e.g. no `method`, no `m`, mismatched batch `loc`/`val` counts).
+- `404`: unknown `method`.
+- `500`: the write (or batch write) itself failed at the OPC server; for a batch, check the response body for which tag(s) failed.
+- `503`: the OPC server connection is currently down. The service is retrying in the background (see [Operations](#operations) below); safe to retry the request shortly.
 
 # Copyright
 Copyright 2016 Headstation. (http://headstation.com) All rights reserved. The http2opc REST wrapper (everything outside `http2opc/includes/OpenOPC.py`) is free software and may be redistributed under the terms specified in the `License` file (Apache License 2.0).
 
-`http2opc/includes/OpenOPC.py` is a separately-licensed, vendored dependency: Copyright 2007-2015 Barry Barnreiter and contributors, licensed under the GNU GPL v2 with a special linking exception (permitting it to be linked into this Apache-2.0-licensed project) -- see `LICENSE-OpenOPC.txt` for the exact terms. 
+`http2opc/includes/OpenOPC.py` is a separately-licensed, vendored dependency: Copyright 2007-2015 Barry Barnreiter and contributors, licensed under the GNU GPL v2 with a special linking exception (permitting it to be linked into this Apache-2.0-licensed project). See `LICENSE-OpenOPC.txt` for the exact terms. 

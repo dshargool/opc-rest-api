@@ -10,12 +10,8 @@ import logging
 
 from includes import ApiServers
 
-# A level below DEBUG for OpenOPC.py's own per-COM-call tracing
-# (AddGroup/SyncRead/RemoveGroup/Connect/...), wired up in ApiFunctions.init()
-# via OpenOPC.client.set_trace(). Keeping it separate from DEBUG means
-# "debug" gives REST/business-level call detail (list(...) -> N items, etc.)
-# without also being flooded by low-level OPC wire tracing -- that's opt-in
-# via level=trace specifically.
+# Below DEBUG: OpenOPC.py's own per-COM-call tracing (wired up in
+# ApiFunctions.init()), kept separate so "debug" isn't flooded by it.
 TRACE = 5
 logging.addLevelName(TRACE, "TRACE")
 

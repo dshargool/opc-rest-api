@@ -23,13 +23,10 @@ OUTAGE_RELOG_INTERVAL_SECONDS = 60
 
 
 class OpcConnection:
-    """One configured OPC server -- the primary, or a failover -- with its
-    own OpenOPC.client() and connect/reconnect/health-check state, so
-    several servers can be ticked independently from ApiFunctions.tick().
-    All still driven from the same thread: OPC's COM client is bound to a
-    single-threaded apartment and can't safely be touched from a second one,
-    so "multiple connections" means multiple OpcConnection objects owned by
-    one thread, never multiple threads sharing one.
+    """One configured OPC server (primary or failover), with its own
+    OpenOPC.client() and reconnect/health-check state. Still single-
+    threaded: OPC's COM client can't be touched from a second thread, so
+    multiple connections means multiple objects on one thread, not threads.
     """
 
     def __init__(self, name, logger, classname, servers, host):
@@ -40,15 +37,9 @@ class OpcConnection:
         self.host = host
 
         self.opc = OpenOPC.client()
-        # OpenOPC.py already has trace calls sprinkled through every COM
-        # operation (AddGroup/RemoveGroup/SyncRead/AsyncRefresh/Connect/...)
-        # but nothing ever wired them up. This is the cheapest possible way
-        # to get low-level OPC operation tracing in the field: enable with
-        # [logging] level=trace, no code changes needed at the call site.
-        # Tagged with the connection name now that there can be more than
-        # one. logger.trace() is added to the Logger class by main.py; fall
-        # back to debug for any logger that doesn't have it (e.g. a plain
-        # test double or a logger obtained without going through main.py).
+        # Wires up OpenOPC.py's own (otherwise dead) per-COM-call tracing to
+        # the `trace` log level, tagged with this connection's name.
+        # logger.trace() is added by main.py; fall back to debug if absent.
         trace_log = getattr(self.logger, "trace", self.logger.debug)
         self.opc.set_trace(lambda msg: trace_log(f"OpenOPC[{self.name}]: {msg}"))
 
@@ -62,22 +53,18 @@ class OpcConnection:
     def connect_blocking(self):
         """Block, retrying, until connected.
 
-        Only appropriate for the primary at startup: there's nothing else
-        for this thread to be doing yet, and the process has nothing useful
-        to do until it succeeds. Failover connections connect best-effort
-        instead (see ApiFunctions.init()) so a down failover server never
-        delays startup.
+        Only for the primary at startup, when there's nothing else to do
+        yet. Failover connections connect best-effort instead (init()) so a
+        down failover never delays startup.
         """
         while not self.connected:
             self._attempt_reconnect()
             if not self.connected:
                 time.sleep(RECONNECT_INTERVAL_SECONDS)
 
-    # -- Called frequently (via ApiServers' HTTPServer.service_actions(), on
-    # the same thread that handles requests) so a lost connection is
-    # retried, and a still-good connection is periodically double-checked,
-    # without ever blocking request handling for long: this does at most one
-    # quick connect/info call per tick.
+    # Called every service_actions() poll cycle on the request-handling
+    # thread: retries a lost connection, or periodically re-checks a good
+    # one, without ever blocking request handling for long.
     def tick(self):
         now = time.time()
 
@@ -93,10 +80,8 @@ class OpcConnection:
                 self._next_reconnect_attempt = now + RECONNECT_INTERVAL_SECONDS
                 self._attempt_reconnect()
 
-    # -- Record that this connection is down so callers fail over to the
-    # next one (or fail fast) instead of making another doomed COM call, and
-    # so tick() starts retrying it. Safe to call repeatedly; only
-    # logs/resets state on the transition into the down state.
+    # Marks this connection down so callers fail over / fail fast instead
+    # of retrying a doomed call. Idempotent: only acts on the transition.
     def mark_disconnected(self, reason):
         if self.connected:
             self.connected = False
@@ -136,9 +121,7 @@ class OpcConnection:
                     f"retrying every {RECONNECT_INTERVAL_SECONDS}s"
                 )
 
-    # -- Lightweight, side-effect-free health probe: true if the OPC server
-    # responds and reports itself as 'Running'. Reconnect decisions live in
-    # tick()/mark_disconnected()/_attempt_reconnect(), not here.
+    # Side-effect-free health probe: true if the server reports 'Running'.
     def ping(self):
         try:
             info = self.opc.info()
@@ -191,12 +174,10 @@ class ApiFunctions:
         )
         self.connections = [primary]
 
-        # Optional [opc] failover=name1,name2 lists additional OPC servers,
-        # tried in order after the primary whenever the primary is down --
-        # see ApiFunctions._with_failover(). Each name must have its own
-        # [name] section with at least `host` (classname/servers fall back
-        # to the primary's, since the common case is the same OPC server
-        # program reachable at a different address).
+        # Optional: [opc] failover=name1,name2 lists additional servers,
+        # tried in order when the primary is down (see _with_failover()).
+        # Each needs its own [name] section with `host`; classname/servers
+        # default to the primary's.
         failover_names = [
             name.strip()
             for name in self.config.get("opc", "failover", fallback="").split(",")
@@ -218,7 +199,7 @@ class ApiFunctions:
                 f"(primary + failover: {', '.join(failover_names)})"
             )
 
-        # Only the primary blocks startup -- see OpcConnection.connect_blocking().
+        # Only the primary blocks startup; see OpcConnection.connect_blocking().
         primary.connect_blocking()
 
         # Failover connections connect best-effort; tick() keeps retrying
@@ -238,13 +219,9 @@ class ApiFunctions:
             conn.tick()
             self._note_aggregate_state()
 
-    # -- Detect and log the ALL-down / recovered-from-all-down transitions,
-    # distinctly from any single OpcConnection's own lost/restored messages.
-    # An operator needs to be able to tell "one of several redundant servers
-    # dropped" (degraded, but the REST API is still serving out of the
-    # others) apart from "every configured server is down" (the REST API is
-    # now failing every request with 503). Call this right after anything
-    # that might change a connection's up/down state.
+    # Logs the ALL-down / recovered transitions distinctly from any single
+    # connection's own messages, so "one of several dropped" (still
+    # serving) reads differently from "everything is down" in the logs.
     def _note_aggregate_state(self):
         if self.connected:
             if self._all_down_since is not None:
@@ -260,25 +237,15 @@ class ApiFunctions:
                 self._all_down_since = time.time()
                 self.logger.error(
                     f"ALL {len(self.connections)} configured OPC connection(s) "
-                    f"are down -- requests will get 503 until at least one recovers"
+                    f"are down. Requests will get 503 until at least one recovers"
                 )
 
-    # -- Try each configured connection in priority order (primary first),
-    # skipping ones currently known to be down, calling `operation(opc)`
-    # against the first one that's connected. On OpenOPC.OPCError, marks
-    # that connection down and fails over to the next.
-    #
-    # Writes fail over too, not just reads: confirmed safe for this
-    # deployment specifically, because these OPC servers are independent
-    # front-ends that all ultimately write through to the same Honeywell
-    # ESV, so a write via a failover connection reaches the same physical
-    # destination and any transient inconsistency between servers settles
-    # out downstream. That assumption lives here, in this one place, in case
-    # it stops being true for some future server added to the list.
-    #
-    # Raises the last error if every connection failed, or a generic
-    # OPCError if none were even connected to try (ApiServers' `if not
-    # funcs.connected` gate normally short-circuits before that happens).
+    # Tries each connection in priority order (primary first, skipping ones
+    # known down) until operation(opc) succeeds. On OPCError, marks that
+    # connection down and moves to the next. Writes fail over too; that's
+    # safe here because these servers all write through to the same
+    # Honeywell ESV (see README). Raises the last error once every
+    # connection has failed.
     def _with_failover(self, operation):
         last_err = None
         for conn in self.connections:
@@ -294,7 +261,7 @@ class ApiFunctions:
             raise last_err
         raise OpenOPC.OPCError("No OPC connections available")
 
-    # -- Mirror to OpenOPC's list function with non-recursive options set. You can parse in either '*' or the branch that you would like to list.
+    # Non-recursive; pass '*' or a branch path.
     def list(self, params):
         if not self.preferences["show_root"]:
             params = "Root." + params
@@ -304,15 +271,14 @@ class ApiFunctions:
         self.logger.debug(f"list({params}) -> {len(lst)} item(s)")
         return lst
 
-    # -- Mirror to the OpenOPC's list function with recursive options set. It returns a flat list of all leaves from the parameters set. You can parse in either '*' or the branch you would like to list.
+    # Recursive: returns every leaf under the given branch (or '*').
     def listRecursive(self, params):
         self.logger.debug(f"listRecursive({params})")
         lst = self._with_failover(lambda opc: opc.list(params, True, False, True))
         self.logger.debug(f"listRecursive({params}) -> {len(lst)} item(s)")
         return lst
 
-    # -- Returns the next level of "branch" based on the parameters set. You can parse in either '*' or the branch you would like the next level of.
-
+    # Next level of "branch" only, not fully recursive.
     def listTree(self, params):
         if not self.preferences["show_root"]:
             params = "Root." + params
@@ -371,35 +337,26 @@ class ApiFunctions:
         self.logger.debug(f"listOneDeep({params}) -> {len(branch)} branch(es)")
         return branch
 
-    # -- Mimics OpenOPC's read function. Parsing in a branch or leaf and it will return a tuple of values.
-    # A single tag ('Root.Int4') returns OpenOPC's single-tag shape
-    # (value, quality, timestamp), unchanged from before. A comma-separated
-    # list ('Root.Int4,Root.Int5') batches them into one OPC call and returns
-    # OpenOPC's multi-tag shape: a list of (tag, value, quality, timestamp).
+    # A single tag keeps OpenOPC's single-tag shape (value, quality,
+    # timestamp); a comma-separated list batches into one OPC call and
+    # returns the multi-tag shape (tag, value, quality, timestamp).
     def read(self, params):
         tags = params.split(",") if "," in params else params
 
-        # sync=True: this is a request/response proxy, not a subscriber, so
-        # there's no reason to use OpenOPC's async/callback path here. The
-        # async path creates a per-request COM group + event subscription
-        # that (before the OpenOPC.py cleanup fix) could leak on every call,
-        # and always leaked its _group_hooks entry regardless.
+        # Always synchronous: the async path creates a per-request COM
+        # group + event subscription that isn't needed here and used to
+        # leak (see OpenOPC.iread).
         self.logger.debug(f"read({tags})")
         lst = self._with_failover(lambda opc: opc.read(tags, sync=True))
         self.logger.debug(f"read({tags}) -> {lst}")
 
         return lst
 
-    # -- Mimics OpenOPC's write function. `params` is [tag, value] for a
-    # single write (returns a plain 'Success'/error string), or
-    # [[tag1, value1], [tag2, value2], ...] for a batch write (returns a
-    # list of (tag, status) pairs) -- OpenOPC's write() already dispatches
-    # on this shape; see ApiServers.do_PUT for how the batch is assembled.
+    # `params` is [tag, value] for a single write, or a list of such pairs
+    # for a batch (OpenOPC.write() dispatches on the shape; see
+    # ApiServers.do_PUT for how a batch is assembled).
     def write(self, params):
-        # Writes change physical/process state, so they're logged at INFO
-        # (not DEBUG like the read-only paths above) -- worth having in the
-        # log by default as a record of what was written and whether it
-        # succeeded, without needing to turn on debug logging.
+        # State-changing, so logged at INFO (not DEBUG) by default.
         self.logger.info(f"write({params})")
         success = self._with_failover(lambda opc: opc.write(params))
 
@@ -420,7 +377,7 @@ class ApiFunctions:
 
         return success
 
-    # -- Mimics the OpenOPC's properties function. Parsing in a leaf name or multiple leaves will return the result that you would expect when calling it via OpenOPC
+    # Accepts a single leaf name or a comma-separated list of leaves.
     def properties(self, params, as_json=False):
         if type(params).__name__ == "list":
             split = params

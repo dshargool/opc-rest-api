@@ -12,7 +12,7 @@ jobs:
     # ApiServers) never touches win32com directly and is fully unit-testable
     # here with a mocked OPC client. The vendored OpenOPC.py's actual COM
     # automation can only be exercised against a real OPC server on Windows
-    # -- see README's Development / Testing section -- so there's nothing a
+    # (see README's Development / Testing section), so there's nothing a
     # Windows CI runner (with no OPC server attached) could verify beyond
     # what's already covered, and pywin32 isn't installable here anyway.
     runs-on: ubuntu-latest
